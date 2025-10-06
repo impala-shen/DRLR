@@ -514,21 +514,11 @@ class SAC(Agent):
                     self.expert_memory.sample(names=self._tensors_names, batch_size=self._batch_size)[0]
 
             else:
-                # sampled_states, sampled_actions, sampled_rewards, sampled_next_states, sampled_dones = \
-                #     self.memory.sample(names=self._tensors_names, batch_size=self._batch_size)[0]
-                # # # print('sampled_states', sampled_states)
-                sampled_states_r, sampled_actions_r, sampled_rewards_r, sampled_next_states_r, sampled_dones_r = \
-                    self.memory.sample(names=self._tensors_names, batch_size=int(self._batch_size * 1))[0]
-                expert_states_r, expert_actions_r, expert_rewards_r, expert_next_states_r, expert_dones_r = \
-                    self.expert_memory.sample(names=self._tensors_names, batch_size=int(self._batch_size * 0))[0]
+                sampled_states, sampled_actions, sampled_rewards, sampled_next_states, sampled_dones = \
+                    self.memory.sample(names=self._tensors_names, batch_size=int(self._batch_size))[0]
                 expert_states, expert_actions, expert_rewards, expert_next_states, expert_dones = \
                     self.expert_memory.sample(names=self._tensors_names,
                                               batch_size=int(self._batch_size))[0]
-                sampled_states = torch.cat((sampled_states_r, expert_states_r))
-                sampled_actions = torch.cat((sampled_actions_r, expert_actions_r))
-                sampled_next_states = torch.cat((sampled_next_states_r, expert_next_states_r))
-                sampled_rewards = torch.cat((sampled_rewards_r, expert_rewards_r))
-                sampled_dones = torch.cat((sampled_dones_r, expert_dones_r))
 
             with torch.autocast(device_type=self._device_type, enabled=self._mixed_precision):
 
@@ -537,11 +527,8 @@ class SAC(Agent):
 
                 # compute target values
                 with torch.no_grad():
-                    # next_actions, next_log_prob, _ = self.policy.act({"states": sampled_next_states}, role="policy")
                     next_actions, next_log_prob, _ = self._select_act(sampled_next_states, expert_next_states, soft=True,
-                                                          target=True)
-                    # next_actions, next_log_prob, _ = self._select_act(sampled_next_states, sampled_next_states, soft=True,
-                    #                                       target=True)
+                                                          target=True)  # DRLR core modification
 
                     target_q1_values, _, _ = self.target_critic_1.act(
                         {"states": sampled_next_states, "taken_actions": next_actions}, role="target_critic_1"
@@ -574,10 +561,6 @@ class SAC(Agent):
             # optimization step (critic)
             self.critic_optimizer.zero_grad()
             self.scaler.scale(critic_loss).backward()
-
-            # if config.torch.is_distributed:
-            #     self.critic_1.reduce_parameters()
-            #     self.critic_2.reduce_parameters()
 
             if self._grad_norm_clip > 0:
                 self.scaler.unscale_(self.critic_optimizer)
