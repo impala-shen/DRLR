@@ -1,0 +1,6 @@
+[submodule "skrl"]
+	path = skrl
+	url = git@github.com:Toni-SM/skrl.git
+[submodule "IsaacGymEnvs"]
+	path = IsaacGymEnvs
+	url = git@github.com:isaac-sim/IsaacGymEnvs.git
