@@ -73,7 +73,7 @@ class IBRL(Agent):
                  action_space: Optional[Union[int, Tuple[int], gym.Space, gymnasium.Space]] = None,
                  device: Optional[Union[str, torch.device]] = None,
                  cfg: Optional[dict] = None) -> None:
-        """IBRL
+        """IBRL(https://arxiv.org/abs/2311.02198)
         :param models_il: NN used for Imitation learning in IBRL paper, It is MLPs.
         :type models: dictionary of skrl.models.torch.Model
         :param models: NNs used by the RL agent, in IBRL paper, they are all MLPs.
@@ -109,29 +109,38 @@ class IBRL(Agent):
         # models
         self.policy = self.models.get("policy", None)
         self.target_policy = self.models.get("target_policy", None)
-        self.critic_1 = self.models.get("critic_1", None)
-        self.critic_2 = self.models.get("critic_2", None)
-        self.target_critic_1 = self.models.get("target_critic_1", None)
-        self.target_critic_2 = self.models.get("target_critic_2", None)
+        self.RED_Q = self.cfg["RED-Q_enable"]
+        if self.RED_Q:
+            # RED-Q: Random ensemble of critics
+            self.critics = self.models.get("critics", [])
+            self.target_critics = self.models.get("target_critics", [])
+        else:
+            self.critic_1 = self.models.get("critic_1", None)
+            self.critic_2 = self.models.get("critic_2", None)
+            self.critics = [self.critic_1, self.critic_2]
+            self.target_critic_1 = self.models.get("target_critic_1", None)
+            self.target_critic_2 = self.models.get("target_critic_2", None)
+            self.target_critics = [self.target_critic_1, self.target_critic_2]
 
         # checkpoint models
         self.checkpoint_modules["policy"] = self.policy
         self.checkpoint_modules["target_policy"] = self.target_policy
-        self.checkpoint_modules["critic_1"] = self.critic_1
-        self.checkpoint_modules["critic_2"] = self.critic_2
-        self.checkpoint_modules["target_critic_1"] = self.target_critic_1
-        self.checkpoint_modules["target_critic_2"] = self.target_critic_2
+        for i, critic in enumerate(self.critics):
+            self.checkpoint_modules[f"critic_{i}"] = critic
+        for i, target_critic in enumerate(self.target_critics):
+            self.checkpoint_modules[f"target_critic_{i}"] = target_critic
 
-        if self.target_policy is not None and self.target_critic_1 is not None and self.target_critic_2 is not None:
+        if self.target_policy is not None and len(self.target_critics) > 0:
             # freeze target networks with respect to optimizers (update via .update_parameters())
             self.target_policy.freeze_parameters(True)
-            self.target_critic_1.freeze_parameters(True)
-            self.target_critic_2.freeze_parameters(True)
+            for target_critic in self.target_critics:
+                target_critic.freeze_parameters(True)
 
             # update target networks (hard update)
             self.target_policy.update_parameters(self.policy, polyak=1)
-            self.target_critic_1.update_parameters(self.critic_1, polyak=1)
-            self.target_critic_2.update_parameters(self.critic_2, polyak=1)
+            for i, target_critic in enumerate(self.target_critics):
+                target_critic.update_parameters(self.critics[i], polyak=1)
+
 
         # configuration
         self._gradient_steps = self.cfg["gradient_steps"]
@@ -163,16 +172,32 @@ class IBRL(Agent):
         self._smooth_regularization_noise = self.cfg["smooth_regularization_noise"]
         self._smooth_regularization_clip = self.cfg["smooth_regularization_clip"]
 
+        # RED-Q parameters
+        self._ensemble_size = self.cfg["ensemble_size"]
+        self._critic_subset_size = self.cfg["critic_subset_size"]
+        self._policy_subset_size = self.cfg["policy_subset_size"]
+
+        self._offline = self.cfg["offline"]
+        self._num_envs = self.cfg["num_envs"]
+        self._demo_file = self.cfg["demo_file"]
         self._rewards_shaper = self.cfg["rewards_shaper"]
 
         # set up optimizers and learning rate schedulers
         if self.policy is not None and self.critic_1 is not None and self.critic_2 is not None:
             self.policy_optimizer = torch.optim.Adam(self.policy.parameters(), lr=self._actor_learning_rate)
-            self.critic_optimizer = torch.optim.Adam(itertools.chain(self.critic_1.parameters(), self.critic_2.parameters()),
-                                                     lr=self._critic_learning_rate)
+            # Create optimizer for all critics in ensemble
+            all_critic_params = []
+            for critic in self.critics:
+                all_critic_params.extend(critic.parameters())
+            self.critic_optimizer = torch.optim.Adam(all_critic_params, lr=self._critic_learning_rate)
+
             if self._learning_rate_scheduler is not None:
-                self.policy_scheduler = self._learning_rate_scheduler(self.policy_optimizer, **self.cfg["learning_rate_scheduler_kwargs"])
-                self.critic_scheduler = self._learning_rate_scheduler(self.critic_optimizer, **self.cfg["learning_rate_scheduler_kwargs"])
+                self.policy_scheduler = self._learning_rate_scheduler(self.policy_optimizer,
+                                                                      **self.cfg["learning_rate_scheduler_kwargs"])
+                # self.Il_policy_scheduler = self._learning_rate_scheduler(self.IL_policy_optimizer,
+                #                                                       **self.cfg["learning_rate_scheduler_kwargs"])
+                self.critic_scheduler = self._learning_rate_scheduler(self.critic_optimizer,
+                                                                      **self.cfg["learning_rate_scheduler_kwargs"])
 
             self.checkpoint_modules["policy_optimizer"] = self.policy_optimizer
             self.checkpoint_modules["critic_optimizer"] = self.critic_optimizer
@@ -198,21 +223,19 @@ class IBRL(Agent):
             self.memory.create_tensor(name="rewards", size=1, dtype=torch.float32)
             self.memory.create_tensor(name="terminated", size=1, dtype=torch.bool)
             self._tensors_names = ["states", "actions", "rewards", "next_states", "terminated"]
-            # # # exp_memory = postprocessing.MemoryFileIterator("/home/chen/Downloads/new/memories/expert_bc.csv")
-            # exp_memory = postprocessing.MemoryFileIterator("/home/chen/Downloads/new/memories/Cab-expert-bc.csv")
-            # exp_memory = postprocessing.MemoryFileIterator("/home/chen/Downloads/new/memories/try.csv")
-            # for k, data0 in exp_memory:
-            #     # self.expert_memory.add_samples(d)
-            #     keys = list(data0.keys())
-            #     for i in range(0, 30000):
-            #         self.memory.add_samples(states=torch.Tensor(np.array(data0[keys[3]][i])),
-            #                                actions=torch.Tensor(np.array(data0[keys[0]][i])),
-            #                                rewards=torch.Tensor(np.array(data0[keys[2]][i])),
-            #                                next_states=torch.Tensor(np.array(data0[keys[1]][i])),
-            #                                terminated=torch.Tensor(np.array(data0[keys[4]][i])))
-            # # self.memory.load("/home/chen/Downloads/memories/2000_new.pt")
-            # # self.memory.save("/home/chen/Downloads/memories", "csv")
-            # print("load memory successfully")
+            if self._offline:
+                exp_memory = postprocessing.MemoryFileIterator(self._demo_file)
+                for k, data0 in exp_memory:
+                    # self.expert_memory.add_samples(d)
+                    keys = list(data0.keys())
+                    N = len(data0[keys[0]])
+                    for i in range(0, N):
+                        self.memory.add_samples(states=torch.Tensor(np.array(data0[keys[3]][i])),
+                                               actions=torch.Tensor(np.array(data0[keys[0]][i])),
+                                               rewards=torch.Tensor(np.array(data0[keys[2]][i])),
+                                               next_states=torch.Tensor(np.array(data0[keys[1]][i])),
+                                               terminated=torch.Tensor(np.array(data0[keys[4]][i])))
+                print("load memory successfully")
 
         # create tensors in memory
         # # self.expert_memory
@@ -223,13 +246,13 @@ class IBRL(Agent):
             self.expert_memory.create_tensor(name="rewards", size=1, dtype=torch.float32)
             self.expert_memory.create_tensor(name="terminated", size=1, dtype=torch.bool)
             self._tensors_names = ["states", "actions", "rewards", "next_states", "terminated"]
-            # expert_memory = postprocessing.MemoryFileIterator("/home/chen/Downloads/new/memories/expert_bc.csv")    ## AEM task
-            # expert_memory = postprocessing.MemoryFileIterator("/home/chen/Downloads/new/memories/expert_cab.csv")    ## Others tasks
-            expert_memory = postprocessing.MemoryFileIterator("/home/chen/Downloads/new/memories/Cab-expert-bc.csv")    ## Others tasks
+            expert_memory = postprocessing.MemoryFileIterator(self._demo_file)
+
             for j, data in expert_memory:
                 # self.expert_memory.add_samples(d)
                 keys = list(data.keys())
-                for i in range(0, 15000):
+                N = len(data[keys[0]])
+                for i in range(0, N):
                     self.expert_memory.add_samples(states=torch.Tensor(np.array(data[keys[3]][i])),
                                                    actions=torch.Tensor(np.array(data[keys[0]][i])),
                                                    rewards=torch.Tensor(np.array(data[keys[2]][i])),
@@ -287,31 +310,15 @@ class IBRL(Agent):
             # probs = F.softmax(target_q_values * self._soft_update_beta, dim=1)
             probs = torch.nn.functional.softmax(target_q_values * self._soft_update_beta, dim=1)
             action_indices = probs.multinomial(1)
-            # actions = rl_bc_actions[torch.arange(batch_size), action_indices]
-            # actions = il_actions
-            # print(action_indices)
             actions = il_actions * (1 - action_indices) + rl_actions * action_indices
-
-            # p_center = torch.nn.functional.softmax(qa * self.cfg.soft_ibrl_beta, dim=1)
-            # center_idx = p_center.multinomial(1)
-            # if (not use_target) and self.stats is not None and (not eval_mode):
-            #     assert bsize == 1
-            #     self.stats["actor/p_max"].append(p_center.max().item())
-            #
-            # # center_idx: [batchsize, 1]
-            # action = rl_action * (1 - center_idx) + bc_action * center_idx
-            self.track_data("Percent (max)", torch.max(probs).item())
-
         else:
             # Greedy selection
             action_indices = target_q_values.argmax(dim=1)
             actions = rl_bc_actions[torch.arange(batch_size), action_indices]
 
-            # actions = rl_actions
-            # actions = il_actions
-
-        self.track_data("Q-network / rl_Q (mean)", torch.mean(target_q_rl).item())
-        self.track_data("Q-network / il_Q (mean)", torch.mean(target_q_il).item())
+        if not target:
+            self.track_data("Q-network / select_rl_Q (mean)", torch.mean(target_q_rl).item())
+            self.track_data("Q-network / select_il_Q (mean)", torch.mean(target_q_il).item())
 
         return actions, _, _
 
@@ -330,9 +337,7 @@ class IBRL(Agent):
         """
         # sample random actions, warming up
         if timestep < self._random_timesteps:
-            # return self.policy.random_act({"states": self._state_preprocessor(states)}, role="policy")
-            # return self.policy.act({"states": self._state_preprocessor(states)}, role="policy")
-            return self.IL_policy.act({"states": self._state_preprocessor(states)}, role="policy")
+            return self.policy.random_act({"states": self._state_preprocessor(states)}, role="policy")
 
         # for pretrain stage, still need exploration noises
         if self._random_timesteps < timestep < self._learning_starts+self._random_timesteps:
@@ -437,6 +442,13 @@ class IBRL(Agent):
         """
         super().record_transition(states, actions, rewards, next_states, terminated, truncated, infos, timestep, timesteps)
 
+        if timestep < self._random_timesteps + self._learning_starts - 1:
+            self.expert_memory.add_samples(states=states, actions=actions, rewards=rewards, next_states=next_states,
+                                           terminated=terminated, truncated=truncated)
+            for expert_memory in self.secondary_memories:
+                expert_memory.add_samples(states=states, actions=actions, rewards=rewards, next_states=next_states,
+                                          terminated=terminated, truncated=truncated)
+
         # if timestep > self._random_timesteps + self._learning_starts - 1:
         if self.memory is not None:
             # reward shaping
@@ -472,15 +484,9 @@ class IBRL(Agent):
         :param timesteps: Number of timesteps
         :type timesteps: int
         """
-        if self._random_timesteps - 1 < timestep < self._random_timesteps + self._learning_starts:
+        if timestep >= self._learning_starts:
             self.set_mode("train")
-            self._update(timestep, timesteps, pre_train=True)
-            self.set_mode("eval")
-
-        # elif timestep >= self._learning_starts:
-        else:
-            self.set_mode("train")
-            self._update(timestep, timesteps, pre_train=False)
+            self._update(timestep, timesteps)
             self.set_mode("eval")
 
         # write tracking data and checkpoints
@@ -488,16 +494,30 @@ class IBRL(Agent):
 
     def _compute_min_q_values(self, states, actions):
         """Helper to compute target Q-values using both critics"""
-        q1, _, _ = self.target_critic_1.act(
-            {"states": states, "taken_actions": actions},
-            role="target_critic_1"
-        )
-        q2, _, _ = self.target_critic_2.act(
-            {"states": states, "taken_actions": actions},
-            role="target_critic_2"
-        )
-        min_q = torch.min(q1, q2)
-        return min_q
+        # RED-Q: compute target values using ensemble
+
+        # Compute target values
+        if self.RED_Q:
+            # RED-Q: randomly sample subset of critics to compute target Q value
+            random_critic_indices = torch.randperm(len(self.critics))[:self._critic_subset_size]
+            target_q_values_list = []
+            for idx in random_critic_indices:
+                target_q_val, _, _ = self.target_critics[idx].act(
+                    {"states": states, "taken_actions": actions},
+                    role=f"target_critic_{idx}"
+                )
+                target_q_values_list.append(target_q_val)
+        else:
+            target_q_values_list = []
+            for idx in [0,1]:
+                target_q_val, _, _ = self.target_critics[idx].act(
+                    {"states": states, "taken_actions": actions},
+                    role=f"target_critic_{idx+1}"
+                )
+                target_q_values_list.append(target_q_val)
+        target_q_values = torch.stack(target_q_values_list, dim=0)
+        target_q_value = torch.min(target_q_values, dim=0)[0]
+        return target_q_value
 
     def _update(self, timestep: int, timesteps: int, pre_train=False, soft = False, dynamics_bc_loss = True, experience_buffer_ratio=1, expert_buffer_ratio=1) -> None:
         """Algorithm's main update step
@@ -507,109 +527,133 @@ class IBRL(Agent):
         :param timesteps: Number of timesteps
         :type timesteps: int
         """
-        # warm up
-        if timestep < self._random_timesteps:
-            pass
-        # # Sample replay buffer
-        if pre_train:
-            sampled_states, sampled_actions, sampled_rewards, sampled_next_states, sampled_dones = \
-                self.expert_memory.sample(names=self._tensors_names, batch_size=self._batch_size)[0]
-        else:
-            # sample a batch from memory
-            sampled_states, sampled_actions, sampled_rewards, sampled_next_states, sampled_dones = \
-                self.memory.sample(names=self._tensors_names, batch_size=self._batch_size)[0]
-            # sampled_states_r, sampled_actions_r, sampled_rewards_r, sampled_next_states_r, sampled_dones_r = \
-            #     self.memory.sample(names=self._tensors_names, batch_size=int(self._batch_size * experience_buffer_ratio))[0]
-            expert_states_r, expert_actions_r, expert_rewards_r, expert_next_states_r, expert_dones_r = \
-                self.expert_memory.sample(names=self._tensors_names, batch_size=int(self._batch_size * expert_buffer_ratio))[0]
-            # sampled_states = torch.cat((sampled_states_r, expert_states_r))
-            # sampled_actions = torch.cat((sampled_actions_r, expert_actions_r))
-            # sampled_next_states = torch.cat((sampled_next_states_r, expert_next_states_r))
-            # sampled_rewards = torch.cat((sampled_rewards_r, expert_rewards_r))
-            # sampled_dones = torch.cat((sampled_dones_r, expert_dones_r))
-
-
         # gradient steps
         for gradient_step in range(self._gradient_steps):
+            # warm up
+            if timestep < self._random_timesteps:
+                pass
+            if self._offline:
+                sampled_states, sampled_actions, sampled_rewards, sampled_next_states, sampled_dones = \
+                    self.expert_memory.sample(names=self._tensors_names, batch_size=self._batch_size)[0]
+            else:
+                # sample a batch from memory
+                sampled_states, sampled_actions, sampled_rewards, sampled_next_states, sampled_dones = \
+                    self.memory.sample(names=self._tensors_names, batch_size=self._batch_size)[0]
+                expert_states_r, expert_actions_r, expert_rewards_r, expert_next_states_r, expert_dones_r = \
+                    self.expert_memory.sample(names=self._tensors_names,
+                                              batch_size=int(self._batch_size * expert_buffer_ratio))[0]
 
-            sampled_states = self._state_preprocessor(sampled_states, train=not gradient_step)
-            sampled_next_states = self._state_preprocessor(sampled_next_states)
+            with torch.autocast(device_type=self._device_type, enabled=self._mixed_precision):
 
-            with torch.no_grad():
-                if pre_train:
-                    # target policy smoothing
-                    next_actions, _, _ = self.target_policy.act({"states": sampled_next_states}, role="target_policy")
-                    noises = torch.clamp(self._smooth_regularization_noise.sample(next_actions.shape),
-                                         min=-self._smooth_regularization_clip,
-                                         max=self._smooth_regularization_clip)
-                    next_actions.add_(noises)
-                else:
-                    # select next actions
-                    next_actions, _, _ = self._select_act(sampled_next_states, soft=False, target=True)
+                sampled_states = self._state_preprocessor(sampled_states, train=True)
+                sampled_next_states = self._state_preprocessor(sampled_next_states, train=True)
 
-                # Compute final target values
-                target_qvalues = self._compute_min_q_values(sampled_next_states, next_actions)
-                target_values = sampled_rewards + self._discount_factor * sampled_dones.logical_not() * target_qvalues
+                with torch.no_grad():
+                    if self._offline:
+                        # target policy smoothing
+                        next_actions, _, _ = self.target_policy.act({"states": sampled_next_states}, role="target_policy")
+                        noises = torch.clamp(self._smooth_regularization_noise.sample(next_actions.shape),
+                                             min=-self._smooth_regularization_clip,
+                                             max=self._smooth_regularization_clip)
+                        next_actions.add_(noises)
+                    else:
+                        # select next actions
+                        next_actions, _, _ = self._select_act(sampled_next_states, soft=False, target=True)  # IBRL action selection module
 
-                # expert_target_values = expert_rewards_r + self._discount_factor * sampled_dones.logical_not() * target_qvalues
-                # target_values = sampled_rewards + 0.5 * sampled_dones.logical_not() * target_qvalues
+                    # Compute final target values
+                    target_qvalues = self._compute_min_q_values(sampled_next_states, next_actions)
+                    target_values = sampled_rewards + self._discount_factor * sampled_dones.logical_not() * target_qvalues
+                    # Plot discount value for debugging
+                    discount_values = self._discount_factor * sampled_dones.logical_not() * target_qvalues
 
-                discount_values = self._discount_factor * sampled_dones.logical_not() * target_qvalues
+            # RED-Q: compute critic loss for ensemble
+            critic_losses = []
+            for i, critic in enumerate(self.critics):
+                critic_values, _, _ = critic.act(
+                    {"states": sampled_states, "taken_actions": sampled_actions},
+                    role=f"critic_{i}"
+                )
+                # L2 regularization
+                lambda_l2 = 0
+                l2_penalty = sum(torch.sum(param ** 2) for param in critic.parameters())
+                loss_l2 = lambda_l2 * l2_penalty
+                critic_loss = F.mse_loss(critic_values, target_values) + loss_l2
+                critic_losses.append(critic_loss)
 
-            # compute critic loss
-            critic_1_values, _, _ = self.critic_1.act({"states": sampled_states, "taken_actions": sampled_actions}, role="critic_1")
-            critic_2_values, _, _ = self.critic_2.act({"states": sampled_states, "taken_actions": sampled_actions}, role="critic_2")
-
-            critic_loss = F.mse_loss(critic_1_values, target_values) + F.mse_loss(critic_2_values, target_values)
+            # Total critic loss
+            total_critic_loss = sum(critic_losses)
 
             # optimization step (critic)
             self.critic_optimizer.zero_grad()
-            critic_loss.backward()
+            total_critic_loss.backward()
             if self._grad_norm_clip > 0:
-                nn.utils.clip_grad_norm_(itertools.chain(self.critic_1.parameters(), self.critic_2.parameters()), self._grad_norm_clip)
+                # Clip gradients for all critics in ensemble
+                all_critic_params = []
+                for critic in self.critics:
+                    all_critic_params.extend(critic.parameters())
+                nn.utils.clip_grad_norm_(all_critic_params, self._grad_norm_clip)
             self.critic_optimizer.step()
-            ratio = 0.5
+
             # delayed update
             self._critic_update_counter += 1
             if not self._critic_update_counter % self._policy_delay:
                 actions, _, _ = self.policy.act({"states": sampled_states}, role="policy")
-                critic_values, _, _ = self.critic_1.act({"states": sampled_states, "taken_actions": actions}, role="critic_1")
-                actor_loss = -critic_values.mean()
+                il_actions, _, _ = self.IL_policy.act({"states": sampled_states}, role="policy")
+
+                # RED-Q: randomly sample subset of critics for policy update
+                policy_critic_indices = torch.randperm(len(self.critics))[:self._policy_subset_size]
+                policy_critic_values_list = []
+                il_policy_critic_values_list = []
+                for idx in policy_critic_indices:
+                    critic_values, _, _ = self.critics[idx].act(
+                        {"states": sampled_states, "taken_actions": actions},
+                        role=f"critic_{idx}"
+                    )
+                    il_critic_values, _, _ = self.critics[idx].act(
+                        {"states": sampled_states, "taken_actions": il_actions},
+                        role=f"critic_{idx}"
+                    )
+                    policy_critic_values_list.append(critic_values)
+                    il_policy_critic_values_list.append(il_critic_values)
+
+                # Average Q-values from selected critics
+                avg_critic_values = torch.stack(policy_critic_values_list, dim=0).mean(dim=0)
+                avg_il_critic_values = torch.stack(il_policy_critic_values_list, dim=0).mean(dim=0)
+                critic_q_rl = avg_critic_values.mean()
+                critic_q_il = avg_il_critic_values.mean()
+
+                avg_critic_values = torch.stack(policy_critic_values_list, dim=0).mean(dim=0)
+                actor_loss = -avg_critic_values.mean()
 
                 # 1-step return Q-learning loss
                 Lq1_loss = F.mse_loss(target_values, critic_values)
                 bc_loss = 0
 
+                # L2 regularization
+                lambda_l2 = 0
+                l2_penalty = sum(torch.sum(param ** 2) for param in self.policy.parameters())
+                loss_l2 = lambda_l2 * l2_penalty
 
-                if pre_train:
+                if self._offline:
                     bc_loss = F.mse_loss(actions, sampled_actions)
                     policy_loss = actor_loss + 1 * bc_loss + Lq1_loss*0
                 else:
-                    actions_bc, _, _ = self.policy.act({"states": expert_states_r}, role="policy")
-                    bc_loss = F.mse_loss(actions_bc, expert_actions_r)
-                    # cur_actions, _, _ = self.policy.act({"states": sampled_states}, role="policy")
-                    # ref_actions, _, _ = self.IL_policy.act({"states": sampled_states}, role="policy")
-                    # curr_q, _, _ = self.critic_1.act({"states": sampled_states, "taken_actions": cur_actions},
-                    #                                         role="critic_1")
-                    # ref_q, _, _ = self.critic_1.act({"states": sampled_states, "taken_actions": ref_actions},
-                    #                                         role="critic_1")
-                    # ratio = (ref_q > curr_q).float().mean().item()
-                    # policy_loss = (-critic_values*(1-ratio)).mean() + (1 * ratio * bc_loss).mean() + Lq1_loss.mean()
-                    policy_loss = actor_loss+ Lq1_loss*0
+                    actions_bc, _, _ = self.policy.act({"states": sampled_states}, role="policy")
+                    bc_loss = F.mse_loss(actions_bc, sampled_actions)  # To measure OOD actions
+                    policy_loss = actor_loss
 
 
                 # optimization step (policy)
                 self.policy_optimizer.zero_grad()
                 policy_loss.backward()
-                # if self._grad_norm_clip > 0:
-                #     nn.utils.clip_grad_norm_(self.policy.parameters(), self._grad_norm_clip)
-                #     # nn.utils.clip_grad_norm_(self.IL_policy.parameters(), self._grad_norm_clip)
+                if self._grad_norm_clip > 0:
+                    nn.utils.clip_grad_norm_(self.policy.parameters(), self._grad_norm_clip)
                 self.policy_optimizer.step()
 
-                # update target networks
-                self.target_critic_1.update_parameters(self.critic_1, polyak=self._polyak)
-                self.target_critic_2.update_parameters(self.critic_2, polyak=self._polyak)
-                self.target_policy.update_parameters(self.policy, polyak=self._polyak)
+            # update target networks
+            for i, target_critic in enumerate(self.target_critics):
+                target_critic.update_parameters(self.critics[i], polyak=self._polyak)
+            self.target_policy.update_parameters(self.policy, polyak=self._polyak)
 
             # update learning rate
             if self._learning_rate_scheduler:
@@ -620,16 +664,11 @@ class IBRL(Agent):
             if not self._critic_update_counter % self._policy_delay:
                 self.track_data("Loss / Policy loss", policy_loss.item())
                 self.track_data("Loss / BC loss", bc_loss.item())
-                self.track_data("ratio", ratio)
             self.track_data("Loss / Critic loss", critic_loss.item())
 
-            self.track_data("Q-network / Q1 (max)", torch.max(critic_1_values).item())
-            self.track_data("Q-network / Q1 (min)", torch.min(critic_1_values).item())
-            self.track_data("Q-network / Q1 (mean)", torch.mean(critic_1_values).item())
-
-            self.track_data("Q-network / Q2 (max)", torch.max(critic_2_values).item())
-            self.track_data("Q-network / Q2 (min)", torch.min(critic_2_values).item())
-            self.track_data("Q-network / Q2 (mean)", torch.mean(critic_2_values).item())
+            self.track_data("Q-network / Q (max)", torch.max(avg_critic_values).item())
+            self.track_data("Q-network / Q (min)", torch.min(avg_critic_values).item())
+            self.track_data("Q-network / Q (mean)", torch.mean(avg_critic_values).item())
 
             self.track_data("Target / Target (max)", torch.max(target_values).item())
             self.track_data("Target / Target (min)", torch.min(target_values).item())
@@ -640,3 +679,5 @@ class IBRL(Agent):
             if self._learning_rate_scheduler:
                 self.track_data("Learning / Policy learning rate", self.policy_scheduler.get_last_lr()[0])
                 self.track_data("Learning / Critic learning rate", self.critic_scheduler.get_last_lr()[0])
+            self.track_data("Q-network / rl_Q (mean)", critic_q_rl.item())
+            self.track_data("Q-network / il_Q (mean)", critic_q_il.item())

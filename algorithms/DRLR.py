@@ -147,10 +147,23 @@ class DRLR(Agent):
 
         # checkpoint models
         self.checkpoint_modules["policy"] = self.policy
-        self.checkpoint_modules["critic_1"] = self.critic_1
-        self.checkpoint_modules["critic_2"] = self.critic_2
-        self.checkpoint_modules["target_critic_1"] = self.target_critic_1
-        self.checkpoint_modules["target_critic_2"] = self.target_critic_2
+        self.checkpoint_modules["target_policy"] = self.target_policy
+        for i, critic in enumerate(self.critics):
+            self.checkpoint_modules[f"critic_{i}"] = critic
+        for i, target_critic in enumerate(self.target_critics):
+            self.checkpoint_modules[f"target_critic_{i}"] = target_critic
+
+        if self.target_policy is not None and len(self.target_critics) > 0:
+            # freeze target networks with respect to optimizers (update via .update_parameters())
+            self.target_policy.freeze_parameters(True)
+            for target_critic in self.target_critics:
+                target_critic.freeze_parameters(True)
+
+            # update target networks (hard update)
+            self.target_policy.update_parameters(self.policy, polyak=1)
+            for i, target_critic in enumerate(self.target_critics):
+                target_critic.update_parameters(self.critics[i], polyak=1)
+
         self.demo_mean = 0
         self.demo_cov = 0
 
