@@ -140,7 +140,7 @@ agent_ref = TD3(models=models_td3,
                 device=device)
 
 # load a trained offline TD3 agent,
-agent_ref.load("./runs/cab_td3_imperfect/checkpoints/agent_60000.pt")  # Todo, provide offline TD3 agent
+agent_ref.load("./RefAgent/cab_td3_imperfect/checkpoints/agent_60000.pt")  # provided trained offline TD3 agent
 models_ref = {}
 models_ref["policy"] = DeterministicActor(env.observation_space, env.action_space, device, clip_actions=True)
 # Load the full saved state
