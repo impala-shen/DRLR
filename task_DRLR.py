@@ -14,7 +14,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 # import the skrl components to build the RL system
-from algorithms.sac import SAC, SAC_DEFAULT_CONFIG
+from algorithms.DRLR import DRLR, DRLR_DEFAULT_CONFIG
 from algorithms.td3 import TD3, TD3_DEFAULT_CONFIG
 # from skrl.envs.wrappers.torch import wrap_env
 from skrl.memories.torch import RandomMemory
@@ -203,7 +203,7 @@ models_SAC["target_critics"] = target_critics
 # configure and instantiate the agent (visit its documentation to see all the options)
 # https://skrl.readthedocs.io/en/latest/api/agents/sac.html#configuration-and-hyperparameters
 # configure and instantiate the agent
-cfg = SAC_DEFAULT_CONFIG.copy()
+cfg = DRLR_DEFAULT_CONFIG.copy()
 cfg["discount_factor"] = 0.99
 cfg["batch_size"] = 128
 cfg["random_timesteps"] = 0  # Add some random exploration at the start
@@ -219,7 +219,7 @@ cfg["demo_file"] = "/home/chen/Downloads/new/memories/cab_imperfect.csv"
 cfg["experiment"]["write_interval"] = 200
 cfg["experiment"]["checkpoint_interval"] = 1000
 
-agent = SAC(models=models_SAC,
+agent = DRLR(models=models_SAC,
             models_il=models_ref,
             memory=replay_buffer,
             expert_memory=expert_buffer,
