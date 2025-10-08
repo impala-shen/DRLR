@@ -47,7 +47,16 @@ IBRL_DEFAULT_CONFIG = {
     "smooth_regularization_noise": None,    # smooth noise for regularization
     "smooth_regularization_clip": 0.1,      # clip for smooth regularization
 
+    # RED-Q specific parameters
+    "RED-Q_enable": True,  # use REDQ?
+    "ensemble_size": 5,  # number of critics in ensemble (N)
+    "critic_subset_size": 2,  # number of critics to sample for target computation (M)
+    "policy_subset_size": 2,  # number of critics to sample for policy updates
+
     "rewards_shaper": None,         # rewards shaping function: Callable(reward, timestep, timesteps) -> reward
+    "offline": False,
+    "demo_file": "",
+    "num_envs": 1,
 
     "experiment": {
         "directory": "",            # experiment's parent directory
@@ -183,8 +192,10 @@ class IBRL(Agent):
         self._rewards_shaper = self.cfg["rewards_shaper"]
 
         # set up optimizers and learning rate schedulers
-        if self.policy is not None and self.critic_1 is not None and self.critic_2 is not None:
+        if self.policy is not None and len(self.critics) > 0:
             self.policy_optimizer = torch.optim.Adam(self.policy.parameters(), lr=self._actor_learning_rate)
+            # self.IL_policy_optimizer = torch.optim.Adam(self.IL_policy.parameters(), lr=self._actor_learning_rate)
+
             # Create optimizer for all critics in ensemble
             all_critic_params = []
             for critic in self.critics:
@@ -194,8 +205,6 @@ class IBRL(Agent):
             if self._learning_rate_scheduler is not None:
                 self.policy_scheduler = self._learning_rate_scheduler(self.policy_optimizer,
                                                                       **self.cfg["learning_rate_scheduler_kwargs"])
-                # self.Il_policy_scheduler = self._learning_rate_scheduler(self.IL_policy_optimizer,
-                #                                                       **self.cfg["learning_rate_scheduler_kwargs"])
                 self.critic_scheduler = self._learning_rate_scheduler(self.critic_optimizer,
                                                                       **self.cfg["learning_rate_scheduler_kwargs"])
 
@@ -543,7 +552,7 @@ class IBRL(Agent):
                     self.expert_memory.sample(names=self._tensors_names,
                                               batch_size=int(self._batch_size * expert_buffer_ratio))[0]
 
-            with torch.autocast(device_type=self._device_type, enabled=self._mixed_precision):
+            with torch.no_grad():
 
                 sampled_states = self._state_preprocessor(sampled_states, train=True)
                 sampled_next_states = self._state_preprocessor(sampled_next_states, train=True)
@@ -616,12 +625,6 @@ class IBRL(Agent):
                     policy_critic_values_list.append(critic_values)
                     il_policy_critic_values_list.append(il_critic_values)
 
-                # Average Q-values from selected critics
-                avg_critic_values = torch.stack(policy_critic_values_list, dim=0).mean(dim=0)
-                avg_il_critic_values = torch.stack(il_policy_critic_values_list, dim=0).mean(dim=0)
-                critic_q_rl = avg_critic_values.mean()
-                critic_q_il = avg_il_critic_values.mean()
-
                 avg_critic_values = torch.stack(policy_critic_values_list, dim=0).mean(dim=0)
                 actor_loss = -avg_critic_values.mean()
 
@@ -664,11 +667,11 @@ class IBRL(Agent):
             if not self._critic_update_counter % self._policy_delay:
                 self.track_data("Loss / Policy loss", policy_loss.item())
                 self.track_data("Loss / BC loss", bc_loss.item())
-            self.track_data("Loss / Critic loss", critic_loss.item())
+                self.track_data("Loss / Critic loss", critic_loss.item())
 
-            self.track_data("Q-network / Q (max)", torch.max(avg_critic_values).item())
-            self.track_data("Q-network / Q (min)", torch.min(avg_critic_values).item())
-            self.track_data("Q-network / Q (mean)", torch.mean(avg_critic_values).item())
+                self.track_data("Q-network / Q (max)", torch.max(avg_critic_values).item())
+                self.track_data("Q-network / Q (min)", torch.min(avg_critic_values).item())
+                self.track_data("Q-network / Q (mean)", torch.mean(avg_critic_values).item())
 
             self.track_data("Target / Target (max)", torch.max(target_values).item())
             self.track_data("Target / Target (min)", torch.min(target_values).item())
@@ -679,5 +682,3 @@ class IBRL(Agent):
             if self._learning_rate_scheduler:
                 self.track_data("Learning / Policy learning rate", self.policy_scheduler.get_last_lr()[0])
                 self.track_data("Learning / Critic learning rate", self.critic_scheduler.get_last_lr()[0])
-            self.track_data("Q-network / rl_Q (mean)", critic_q_rl.item())
-            self.track_data("Q-network / il_Q (mean)", critic_q_il.item())

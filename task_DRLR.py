@@ -181,7 +181,7 @@ models_SAC["target_critic_2"] = Critic(env.observation_space, env.action_space, 
 for model in models_SAC.values():
     model.init_parameters(method_name="normal_", mean=0.0, std=0.1)
 
-# Create Emseabling Q networks
+# Create Emseabling Q networks (TODO RED-Q unfinished for DRLR, but it is not neccesary)
 ensemble_size = 5
 # Create ensemble of critics (each with unique parameters)
 critics = []
