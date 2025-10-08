@@ -11,7 +11,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-# from skrl import config, logger
+from skrl import config, logger
 from algorithms.IBRLbase import Agent
 from skrl.memories.torch import Memory
 from skrl.models.torch import Model
@@ -147,36 +147,23 @@ class DRLR(Agent):
 
         # checkpoint models
         self.checkpoint_modules["policy"] = self.policy
-        self.checkpoint_modules["target_policy"] = self.target_policy
         for i, critic in enumerate(self.critics):
             self.checkpoint_modules[f"critic_{i}"] = critic
         for i, target_critic in enumerate(self.target_critics):
             self.checkpoint_modules[f"target_critic_{i}"] = target_critic
 
-        if self.target_policy is not None and len(self.target_critics) > 0:
-            # freeze target networks with respect to optimizers (update via .update_parameters())
-            self.target_policy.freeze_parameters(True)
-            for target_critic in self.target_critics:
-                target_critic.freeze_parameters(True)
-
-            # update target networks (hard update)
-            self.target_policy.update_parameters(self.policy, polyak=1)
-            for i, target_critic in enumerate(self.target_critics):
-                target_critic.update_parameters(self.critics[i], polyak=1)
-
         self.demo_mean = 0
         self.demo_cov = 0
 
-
-        # # broadcast models' parameters in distributed runs
-        # if config.torch.is_distributed:
-        #     logger.info("Broadcasting models' parameters")
-        #     if self.policy is not None:
-        #         self.policy.broadcast_parameters()
-        #     if self.critic_1 is not None:
-        #         self.critic_1.broadcast_parameters()
-        #     if self.critic_2 is not None:
-        #         self.critic_2.broadcast_parameters()
+        # broadcast models' parameters in distributed runs
+        if config.torch.is_distributed:
+            logger.info("Broadcasting models' parameters")
+            if self.policy is not None:
+                self.policy.broadcast_parameters()
+            if self.critic_1 is not None:
+                self.critic_1.broadcast_parameters()
+            if self.critic_2 is not None:
+                self.critic_2.broadcast_parameters()
 
         if self.target_critic_1 is not None and self.target_critic_2 is not None:
             # freeze target networks with respect to optimizers (update via .update_parameters())
@@ -578,9 +565,9 @@ class DRLR(Agent):
             self.scaler.scale(critic_loss).backward()
 
 
-            # if config.torch.is_distributed:
-            #     self.critic_1.reduce_parameters()
-            #     self.critic_2.reduce_parameters()
+            if config.torch.is_distributed:
+                self.critic_1.reduce_parameters()
+                self.critic_2.reduce_parameters()
 
             if self._grad_norm_clip > 0:
                 self.scaler.unscale_(self.critic_optimizer)
@@ -610,8 +597,8 @@ class DRLR(Agent):
             self.policy_optimizer.zero_grad()
             self.scaler.scale(policy_loss).backward()
 
-            # if config.torch.is_distributed:
-            #     self.policy.reduce_parameters()
+            if config.torch.is_distributed:
+                self.policy.reduce_parameters()
 
             if self._grad_norm_clip > 0:
                 self.scaler.unscale_(self.policy_optimizer)
