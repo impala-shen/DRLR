@@ -215,7 +215,7 @@ cfg["initial_entropy_value"] = 0.1     # Entropy learning rate
 cfg["RED-Q_enable"] = False     #enable RED-Q
 cfg["offline"] = False       # not important here
 cfg["num_envs"] = env.num_envs
-cfg["demo_file"] = "/home/chen/Downloads/new/memories/cab_imperfect.csv"
+cfg["demo_file"] = "./Demos/cab_imperfect.csv"
 cfg["experiment"]["write_interval"] = 200
 cfg["experiment"]["checkpoint_interval"] = 1000
 

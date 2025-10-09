@@ -46,7 +46,7 @@ BC_DEFAULT_CONFIG = {
     "smooth_regularization_noise": None,    # smooth noise for regularization
     "smooth_regularization_clip": 0.1,      # clip for smooth regularization
 
-
+    "demo_file": "",
     "rewards_shaper": None,         # rewards shaping function: Callable(reward, timestep, timesteps) -> reward
 
     "experiment": {
@@ -129,6 +129,7 @@ class BC(Agent):
         self._smooth_regularization_clip = self.cfg["smooth_regularization_clip"]
 
         self._grad_norm_clip = self.cfg["grad_norm_clip"]
+        self._demo_file = self.cfg["demo_file"]
 
         # set up optimizers and learning rate schedulers
         if self.policy is not None:
@@ -160,24 +161,19 @@ class BC(Agent):
             self.expert_memory.create_tensor(name="terminated", size=1, dtype=torch.bool)
 
             self._tensors_names = ["states", "actions", "rewards", "next_states", "terminated"]
-            # # expert_memory = postprocessing.MemoryFileIterator("/home/chen/Downloads/new/memories/expert_p.csv")  ## For AEM
-            # # expert_memory = postprocessing.MemoryFileIterator("/home/chen/Downloads/new/memories/cartpole_opt.csv")     ## For other tasks
-            # # expert_memory = postprocessing.MemoryFileIterator("/home/chen/Downloads/new/memories/Cab-expert-bc.csv")     ## For other tasks
-            # expert_memory = postprocessing.MemoryFileIterator("/home/chen/Downloads/new/memories/cab_perfect.csv")     ## For other tasks
-            # # expert_memory = postprocessing.MemoryFileIterator("/home/chen/Downloads/new/memories/expert_cab_sparse.csv")     ## For other tasks with sparse
-            # for j, data in expert_memory:
-            #     # self.expert_memory.add_samples(d)
-            #     keys = list(data.keys())
-            #     N = len(data[keys[0]])
-            #     for i in range(0, N):
-            #         self.expert_memory.add_samples(states=torch.Tensor(np.array(data[keys[3]][i])),
-            #                                        actions=torch.Tensor(np.array(data[keys[0]][i])),
-            #                                        rewards=torch.Tensor(np.array(data[keys[2]][i])),
-            #                                        next_states=torch.Tensor(np.array(data[keys[1]][i])),
-            #                                        terminated=torch.Tensor(np.array(data[keys[4]][i])))
-            # # self.expert_memory.load("/home/chen/Downloads/memories/2000_new.pt")
-            # # self.expert_memory.save("/home/chen/Downloads/memories", "csv")
-            # print("load memory successfully")
+            expert_memory = postprocessing.MemoryFileIterator(self._demo_file)
+            for j, data in expert_memory:
+                keys = list(data.keys())
+                N = len(data[keys[0]])
+                for i in range(0, N):
+                    self.expert_memory.add_samples(states=torch.Tensor(np.array(data[keys[3]][i])),
+                                                   actions=torch.Tensor(np.array(data[keys[0]][i])),
+                                                   rewards=torch.Tensor(np.array(data[keys[2]][i])),
+                                                   next_states=torch.Tensor(np.array(data[keys[1]][i])),
+                                                   terminated=torch.Tensor(np.array(data[keys[4]][i])))
+            # self.expert_memory.load("/home/chen/Downloads/memories/2000_new.pt")
+            # self.expert_memory.save("/home/chen/Downloads/memories", "csv")
+            print("load memory successfully")
 
     def act(self, states: torch.Tensor, timestep: int, timesteps: int) -> torch.Tensor:
         """Process the environment's states to make a decision (actions) using the main policy
@@ -195,25 +191,6 @@ class BC(Agent):
         # sample deterministic actions
         actions, _, _ = self.policy.act({"states": self._state_preprocessor(states)}, role="policy")
 
-        # if not self.training:
-        #     # Sample expert buffer
-        #     sampled_states, sampled_actions, sampled_rewards, sampled_next_states, sampled_dones = \
-        #         self.expert_memory.sample(names=self._tensors_names, batch_size=self._batch_size)[0]
-        #
-        #     # gradient steps
-        #     sampled_states = self._state_preprocessor(sampled_states)
-        #     # print('sampled_states', sampled_states)
-        #
-        #     # sample noises
-        #     noises = self._exploration_noise.sample(sampled_states.shape)
-        #     sampled_states.add_(noises)
-        #
-        #     # Compute actor loss
-        #     actions, _, _ = self.policy.act({"states": sampled_states}, role="policy")
-        #     bc_loss = F.mse_loss(actions, sampled_actions)
-        #     self.track_data("Loss / Policy loss", bc_loss.item())
-        # else:
-        # add exloration noise
         if self._exploration_noise is not None:
             # sample noises
             noises = self._exploration_noise.sample(actions.shape)
@@ -279,12 +256,14 @@ class BC(Agent):
         :type timesteps: int
         """
         super().record_transition(states, actions, rewards, next_states, terminated, truncated, infos, timestep, timesteps)
-        # storage transition in memory
-        self.expert_memory.add_samples(states=states, actions=actions, rewards=rewards, next_states=next_states,
-                                    terminated=terminated, truncated=truncated)
-        # self.eval_memory.save("/home/chen/Downloads/new", "pt")
+
+        # #Todo add flag for generating BC policies
+        # # storage transition in memory
+        # self.expert_memory.add_samples(states=states, actions=actions, rewards=rewards, next_states=next_states,
+        #                             terminated=terminated, truncated=truncated)
+        # # self.eval_memory.save("/home/chen/Downloads/new", "pt")
         if timestep == timesteps-1:
-            self.expert_memory.save("/home/chen/Downloads/new/eval", "csv")
+            self.expert_memory.save("./Demos", "csv")
         # pass
 
     def pre_interaction(self, timestep: int, timesteps: int) -> None:

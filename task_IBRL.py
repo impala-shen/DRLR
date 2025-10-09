@@ -174,7 +174,7 @@ cfg_IBRL["learning_starts"] = 0
 cfg_IBRL["learning_rate"] = 3e-4
 cfg_IBRL["num_envs"] = env.num_envs
 # cfg_IBRL["demo_file"] = "/home/chen/Downloads/new/memories/Cab-expert-bc.csv"
-cfg_IBRL["demo_file"] = "/home/chen/Downloads/new/memories/cab-sparse-good.csv"
+cfg_IBRL["demo_file"] = "./Demos/cab-sparse-good.csv"
 # logging to TensorBoard and write checkpoints each 25 and 1000 timesteps respectively
 cfg_IBRL["experiment"]["write_interval"] = 500
 cfg_IBRL["experiment"]["checkpoint_interval"] = 1000
