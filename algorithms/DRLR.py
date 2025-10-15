@@ -277,7 +277,7 @@ class DRLR(Agent):
                     # self.expert_memory.add_samples(d)
                     keys = list(data0.keys())
                     N = len(data0[keys[0]])
-                    for i in range(0, N):
+                    for i in range(0, 128):
                         self.memory.add_samples(states=torch.Tensor(np.array(data0[keys[3]][i])),
                                                 actions=torch.Tensor(np.array(data0[keys[0]][i])),
                                                 rewards=torch.Tensor(np.array(data0[keys[2]][i])),
@@ -345,7 +345,6 @@ class DRLR(Agent):
         # Stack Q-values
         target_q_values = torch.stack([target_q_rl, target_q_il], dim=1).view(batch_size, num_action)
 
-
         if  torch.mean(target_q_il) > torch.mean(target_q_rl):
             il_actions, _, _ = self.IL_policy.act({"states": self._state_preprocessor(obs)}, role="policy")
             actions = il_actions
@@ -356,7 +355,7 @@ class DRLR(Agent):
         if not target:
             self.track_data("Q-network / select_rl_Q (mean)", torch.mean(target_q_rl).item())
             self.track_data("Q-network / select_il_Q (mean)", torch.mean(target_q_il).item())
-            return actions, _, _
+            return actions, _, outputs
         else:
             return actions, next_log_prob, _
 
@@ -387,12 +386,12 @@ class DRLR(Agent):
         M_dist = torch.sqrt(dist_sq)
 
         # select actions
-        actions, _, _ = self._select_act(states, expert_states_r, soft=True, target=False)
-        # actions, _, _ = self._select_act(states, states, soft=True, target=False)
+        actions, _, outputs = self._select_act(states, expert_states_r, soft=True, target=False)
+
 
         self.track_data("Loss / states BC loss", torch.mean(M_dist).item())
 
-        return actions, None, None
+        return actions, None, outputs
 
     def record_transition(
         self,
@@ -444,6 +443,8 @@ class DRLR(Agent):
         for memory in self.secondary_memories:
             memory.add_samples(states=states, actions=actions, rewards=rewards, next_states=next_states,
                                terminated=terminated, truncated=truncated)
+        # if timestep == timesteps - 1:
+        #     self.memory.save("./Demos", "csv")
 
 
     def pre_interaction(self, timestep: int, timesteps: int) -> None:
@@ -531,6 +532,8 @@ class DRLR(Agent):
                 with torch.no_grad():
                     next_actions, next_log_prob, _ = self._select_act(sampled_next_states, expert_next_states, soft=True,
                                                           target=True)  # DRLR core modification
+                    # next_actions, next_log_prob, _ = self._select_act(sampled_next_states, sampled_next_states, soft=True,
+                    #                                       target=True)  # DRLR core modification
 
                     target_q1_values, _, _ = self.target_critic_1.act(
                         {"states": sampled_next_states, "taken_actions": next_actions}, role="target_critic_1"
@@ -548,34 +551,47 @@ class DRLR(Agent):
                         * target_q_values
                     )
 
-                # compute critic loss
-                critic_1_values, _, _ = self.critic_1.act(
-                    {"states": sampled_states, "taken_actions": sampled_actions}, role="critic_1"
-                )
-                critic_2_values, _, _ = self.critic_2.act(
-                    {"states": sampled_states, "taken_actions": sampled_actions}, role="critic_2"
-                )
+                    discout_q_values = (
+                            self._discount_factor
+                            * (sampled_dones).logical_not()
+                            * target_q_values
+                    ).mean()
 
-                critic_loss = (
-                    F.mse_loss(critic_1_values, target_values) + F.mse_loss(critic_2_values, target_values)
-                ) / 2
+            # RED-Q: compute critic loss for ensemble
+            critic_losses = []
+            for i, critic in enumerate(self.critics):
+                critic_values, _, _ = critic.act(
+                    {"states": sampled_states, "taken_actions": sampled_actions},
+                    role=f"critic_{i}"
+                )
+                critic_loss = F.mse_loss(critic_values, target_values)
+                critic_losses.append(critic_loss)
+
+            # Total critic loss
+            total_critic_loss = sum(critic_losses)
 
             # optimization step (critic)
             self.critic_optimizer.zero_grad()
-            self.scaler.scale(critic_loss).backward()
-
-
-            if config.torch.is_distributed:
-                self.critic_1.reduce_parameters()
-                self.critic_2.reduce_parameters()
-
+            total_critic_loss.backward()
             if self._grad_norm_clip > 0:
-                self.scaler.unscale_(self.critic_optimizer)
-                nn.utils.clip_grad_norm_(
-                    itertools.chain(self.critic_1.parameters(), self.critic_2.parameters()), self._grad_norm_clip
-                )
+                # Clip gradients for all critics in ensemble
+                all_critic_params = []
+                for critic in self.critics:
+                    all_critic_params.extend(critic.parameters())
+                nn.utils.clip_grad_norm_(all_critic_params, self._grad_norm_clip)
+            self.critic_optimizer.step()
 
-            self.scaler.step(self.critic_optimizer)
+            # if config.torch.is_distributed:
+            #     self.critic_1.reduce_parameters()
+            #     self.critic_2.reduce_parameters()
+            #
+            # if self._grad_norm_clip > 0:
+            #     self.scaler.unscale_(self.critic_optimizer)
+            #     nn.utils.clip_grad_norm_(
+            #         itertools.chain(self.critic_1.parameters(), self.critic_2.parameters()), self._grad_norm_clip
+            #     )
+            #
+            # self.scaler.step(self.critic_optimizer)
 
             with torch.autocast(device_type=self._device_type, enabled=self._mixed_precision):
                 # compute policy (actor) loss
@@ -649,6 +665,7 @@ class DRLR(Agent):
                 self.track_data("Target / Target (min)", torch.min(target_values).item())
                 self.track_data("Target / Target (mean)", torch.mean(target_values).item())
                 self.track_data("Target / sampled_rewards (mean)", torch.mean(sampled_rewards).item())
+                self.track_data("Target / discount (mean)", torch.mean(discout_q_values).item())
 
                 if self._learn_entropy:
                     self.track_data("Loss / Entropy loss", entropy_loss.item())

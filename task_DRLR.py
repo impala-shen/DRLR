@@ -105,7 +105,7 @@ class Critic1(DeterministicMixin, Model):
 # ============================================================================
 env = isaacgymenvs.make(seed=10,
                         task="FrankaCabinet",
-                        num_envs=10,
+                        num_envs=1,
                         sim_device="cuda:0",
                         rl_device="cuda:0",
                         graphics_device_id=0,
@@ -235,3 +235,16 @@ trainer = SequentialTrainer(cfg=cfg_trainer, env=env, agents=[agent])
 
 # start training
 trainer.train()
+
+
+# # Evaluate policy
+# # load checkpoint (agent)
+# agent.load("./runs/cab_drlr_test0/checkpoints/agent_20000.pt")
+# # Configure and instantiate the RL trainer
+# cfg = {"timesteps": 4000, "headless": False}
+# trainer = SequentialTrainer(cfg=cfg,
+#                             env=env,
+#                             agents=agent,
+#                             agents_scope=[])
+# # evaluate the agent
+# trainer.eval()

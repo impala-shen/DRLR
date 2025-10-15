@@ -232,7 +232,7 @@ class IBRL(Agent):
             self.memory.create_tensor(name="rewards", size=1, dtype=torch.float32)
             self.memory.create_tensor(name="terminated", size=1, dtype=torch.bool)
             self._tensors_names = ["states", "actions", "rewards", "next_states", "terminated"]
-            if self._offline:
+            if not self._offline:
                 exp_memory = postprocessing.MemoryFileIterator(self._demo_file)
                 for k, data0 in exp_memory:
                     # self.expert_memory.add_samples(d)
@@ -296,7 +296,7 @@ class IBRL(Agent):
                 rl_actions.clamp_(min=self.clip_actions_min, max=self.clip_actions_max)
 
         else:
-            rl_actions, _, _ = self.policy.act({"states": self._state_preprocessor(obs)}, role="policy")
+            rl_actions, _, outputs = self.policy.act({"states": self._state_preprocessor(obs)}, role="policy")
 
         # Get IL actions
         self.IL_policy.eval()
@@ -319,7 +319,7 @@ class IBRL(Agent):
             # probs = F.softmax(target_q_values * self._soft_update_beta, dim=1)
             probs = torch.nn.functional.softmax(target_q_values * self._soft_update_beta, dim=1)
             action_indices = probs.multinomial(1)
-            actions = il_actions * (1 - action_indices) + rl_actions * action_indices
+            actions = rl_actions * (1 - action_indices) + il_actions * action_indices
         else:
             # Greedy selection
             action_indices = target_q_values.argmax(dim=1)
@@ -328,8 +328,9 @@ class IBRL(Agent):
         if not target:
             self.track_data("Q-network / select_rl_Q (mean)", torch.mean(target_q_rl).item())
             self.track_data("Q-network / select_il_Q (mean)", torch.mean(target_q_il).item())
-
-        return actions, _, _
+            return actions, _, outputs
+        else:
+            return actions, _, _
 
     def act(self, states: torch.Tensor, timestep: int, timesteps: int) -> torch.Tensor:
         """Compute RL action a_RL = pi(s_t)+ rand, and compute IL action a_IL = miu(s_t)
@@ -350,7 +351,7 @@ class IBRL(Agent):
 
         # for pretrain stage, still need exploration noises
         if self._random_timesteps < timestep < self._learning_starts+self._random_timesteps:
-            actions, _, _ = self.policy.act({"states": self._state_preprocessor(states)}, role="policy")
+            actions, _, outputs = self.policy.act({"states": self._state_preprocessor(states)}, role="policy")
             # add exloration noise
             if self._exploration_noise is not None:
                 # sample noises
@@ -374,10 +375,10 @@ class IBRL(Agent):
                         actions = torch.max(torch.min(actions, self.clip_actions_max), self.clip_actions_min)
                     else:
                         actions.clamp_(min=self.clip_actions_min, max=self.clip_actions_max)
-            return actions, _, _
+            return actions, _, outputs
 
         # select actions
-        actions, _, _ = self._select_act(states, soft=False, target=False)
+        actions, _, outputs = self._select_act(states, soft=False, target=False)
         # actions, _, _ = self.policy.act({"states": self._state_preprocessor(states)}, role="policy")
 
         # add exloration noise
@@ -416,7 +417,7 @@ class IBRL(Agent):
                 self.track_data("Exploration / Exploration noise (mean)", 0)
 
 
-        return actions, _, _
+        return actions, _, outputs
 
     def record_transition(self,
                           states: torch.Tensor,

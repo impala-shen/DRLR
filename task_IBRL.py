@@ -174,7 +174,7 @@ cfg_IBRL["learning_starts"] = 0
 cfg_IBRL["learning_rate"] = 3e-4
 cfg_IBRL["num_envs"] = env.num_envs
 # cfg_IBRL["demo_file"] = "/home/chen/Downloads/new/memories/Cab-expert-bc.csv"
-cfg_IBRL["demo_file"] = "./Demos/cab-sparse-good.csv"
+cfg_IBRL["demo_file"] = "./Demos/cab_imperfect.csv"
 # logging to TensorBoard and write checkpoints each 25 and 1000 timesteps respectively
 cfg_IBRL["experiment"]["write_interval"] = 500
 cfg_IBRL["experiment"]["checkpoint_interval"] = 1000
@@ -189,26 +189,26 @@ agent_IBRL = IBRL(models=models_td3,
                 device=device)
 
 
-# Configure and instantiate the RL trainer
-# agent_IBRL.load("./runs/CoL-cab-50000-10/checkpoints/agent_50000.pt")
-cfg = {"timesteps":350000, "headless": False}
-trainer = SequentialTrainer(cfg=cfg,
-                            env=env,
-                            agents=agent_IBRL)
-
-# start training
-trainer.train()
-
-# # Evaluate policy
-# # load checkpoint (agent)
-# # agent_IBRL.load("./runs/IBRL1/checkpoints/agent_30000.pt")
-# # agent_IBRL.load("./runs/IBRLe/checkpoints/agent_100000.pt")
-# agent_IBRL.load("./runs/25-06-03_11-13-28-731364_IBRL/checkpoints/agent_60000.pt")
 # # Configure and instantiate the RL trainer
-# cfg = {"timesteps": 4000, "headless": False}
+# # agent_IBRL.load("./runs/CoL-cab-50000-10/checkpoints/agent_50000.pt")
+# cfg = {"timesteps":350000, "headless": False}
 # trainer = SequentialTrainer(cfg=cfg,
 #                             env=env,
-#                             agents=agent_IBRL,
-#                             agents_scope=[])
-# # evaluate the agent
-# trainer.eval()
+#                             agents=agent_IBRL)
+#
+# # start training
+# trainer.train()
+
+# Evaluate policy
+# load checkpoint (agent)
+# agent_IBRL.load("./runs/IBRL1/checkpoints/agent_30000.pt")
+# agent_IBRL.load("./runs/IBRLe/checkpoints/agent_100000.pt")
+agent_IBRL.load("./runs/25-10-09_23-38-59-988669_IBRL/checkpoints/agent_6000.pt")
+# Configure and instantiate the RL trainer
+cfg = {"timesteps": 4000, "headless": False}
+trainer = SequentialTrainer(cfg=cfg,
+                            env=env,
+                            agents=agent_IBRL,
+                            agents_scope=[])
+# evaluate the agent
+trainer.eval()
