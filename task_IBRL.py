@@ -162,7 +162,6 @@ models_td3["target_critics"] = target_critics
 # https://skrl.readthedocs.io/en/latest/modules/skrl.agents.td3.html#configuration-and-hyperparameters
 cfg_IBRL = IBRL_DEFAULT_CONFIG.copy()
 cfg_IBRL["exploration"]["noise"] = GaussianNoise(0, 0.1, device=device)
-# cfg_IBRL["exploration"]["noise"] = None
 cfg_IBRL["smooth_regularization_noise"] = GaussianNoise(0, 0.1, device=device)
 cfg_IBRL["smooth_regularization_clip"] = 0.5
 cfg_IBRL["gradient_steps"] = 1

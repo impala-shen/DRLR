@@ -194,7 +194,6 @@ class IBRL(Agent):
         # set up optimizers and learning rate schedulers
         if self.policy is not None and len(self.critics) > 0:
             self.policy_optimizer = torch.optim.Adam(self.policy.parameters(), lr=self._actor_learning_rate)
-            # self.IL_policy_optimizer = torch.optim.Adam(self.IL_policy.parameters(), lr=self._actor_learning_rate)
 
             # Create optimizer for all critics in ensemble
             all_critic_params = []

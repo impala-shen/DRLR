@@ -425,7 +425,7 @@ class TD3(Agent):
 
                 if self._BC:
                     # Compute lambda
-                    alpha = 2.5
+                    alpha = 0.
                     lambda_ = alpha / critic_values.abs().mean().detach()
                     scaled_q_value = lambda_*(-critic_values.mean())
                     bc_loss = F.mse_loss(actions, sampled_actions)
