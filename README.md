@@ -35,7 +35,7 @@ The default training task is open drawer in sparse reward setting, to reproduce 
 ```
 $ python task_ppo.py   # train PPO to complete task with good enough performance. After training, eval policy and collect 'expert' demos.
 ```
-2. Train a Ref policy, load the demo file in the BC/TD3+BC config
+2. Train a Ref policy, load the demo file in the BC/TD3+BC config. You can also directly use Ref policies in the RefAgent folder.
 ```
 $ python task_BC.py   # train Ref policy to complete task.
 ```
