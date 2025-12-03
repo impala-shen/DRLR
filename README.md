@@ -4,7 +4,7 @@
 ## General info
 Project is created with:
 * Isaac Gym Preview 4
-* SKRL
+* SKRL 1.4.0
 
 ## Installation requirements
 1. Install Isaac gym and Example RL Environments
