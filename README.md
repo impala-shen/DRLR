@@ -29,17 +29,17 @@ $ conda activate rlgpu
 $ export LD_LIBRARY_PATH=/home/chen/anaconda3/envs/rlgpu/lib:$LD_LIBRARY_PATHA
 ```
 ## How to use Deep Reinforcement Learning with Reference policy(DRLR)
-The default training task is open drawer (https://github.com/isaac-sim/IsaacGymEnvs/blob/main/isaacgymenvs/tasks/franka_cabinet.py)
+The default training task is open drawer in sparse reward setting, to reproduce the same results, remember to change the distance reward gain to 0 in the task config (https://github.com/isaac-sim/IsaacGymEnvs/blob/main/isaacgymenvs/tasks/franka_cabinet.py)
 
-1. Generate and collect demonstrations. If you have human demonstrations, skip this step.
+1. Collect demonstrations. 3 demostrations are provided in the Demos folder, you can also try generate 'fake' expert demo yourself by training PPO.
 ```
 $ python task_ppo.py   # train PPO to complete task with good enough performance. After training, eval policy and collect 'expert' demos.
 ```
-2. Train an IL policy, load your demo file in the BC config
+2. Train a Ref policy, load the demo file in the BC/TD3+BC config
 ```
-$ python task_BC.py   # train PPO to complete task with good enough performance. After training, eval policy and collect 'expert' demos.
+$ python task_BC.py   # train Ref policy to complete task.
 ```
-3. Run training script with DRLR, load your demo file and trained BC agent in the config.
+3. Run training script with DRLR, load your demo file and trained Ref agent in the config.
 
 DRLR algorithm(https://arxiv.org/abs/2509.04069)
 ```
