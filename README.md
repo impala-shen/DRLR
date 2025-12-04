@@ -1,5 +1,6 @@
 # DRLR
-
+This is the code for implementing DRLR algorithm in paper: Solving Robotics Tasks with Prior Demonstration via Exploration-Efficient Deep Reinforcement Learning (https://arxiv.org/abs/2509.04069), which is under review for Journal Frontiers in Robotics and AI.
+If you find it useful, please consider cite this paper.
 
 ## General info
 Project is created with:
